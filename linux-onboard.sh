@@ -1,6 +1,6 @@
 #!/bin/bash
 # linux-onboard.sh
-# Ben Deyot - SYS-265
+# Thomas Marshall - SYS-265
 # Interactive Linux system onboarding script
 # Supports Ubuntu and Rocky/CentOS systems
 
