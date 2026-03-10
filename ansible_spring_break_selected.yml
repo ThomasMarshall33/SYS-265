@@ -1,0 +1,442 @@
+###############################################################################
+#                                                                             #
+#   ANSIBLE SPRING BREAK LAB - SELECTED ELEMENTS PLAYBOOK                     #
+#   Student: Thomas                                                           #
+#   Course: SYS-265 Systems Administration                                    #
+#                                                                             #
+#   Environment:                                                              #
+#     - AD01: Windows Server 2022 Core DC (AD DS + DNS)                       #
+#     - MGMT01: Windows Server 2022 GUI (Management Server)                   #
+#     - WKS01: Windows 11 Client (Domain-joined)                              #
+#     - Controller: Ubuntu Server (Ansible Control Node)                       #
+#     - Ansible01: Rocky Linux (Standalone)                                   #
+#     - Ansible02: Rocky Linux (Standalone)                                   #
+#                                                                             #
+#   Inventory Groups:                                                         #
+#     [windows] -> AD01, MGMT01, WKS01                                       #
+#     [rocky]   -> Ansible01, Ansible02                                       #
+#                                                                             #
+#   Selected Elements (6 total):                                              #
+#     SysAdmin 1: Create shared folder + AD security group (G01)              #
+#     SysAdmin 2: Configure DNS scavenging on AD01 (G05)                      #
+#     Hardening 1: Disable SMBv1 on all Windows hosts (G01)                   #
+#     Hardening 2: Disable WDigest authentication (G04)                       #
+#     GPO 1: Audit logon events - success + failure (G02)                     #
+#     GPO 2: Hide last logged-on username (G05)                               #
+#                                                                             #
+#   Usage:                                                                    #
+#     Test first:  ansible-playbook ansible_spring_break_selected.yml --check #
+#     Run it:      ansible-playbook ansible_spring_break_selected.yml         #
+#                                                                             #
+###############################################################################
+
+---
+
+###############################################################################
+#                         PLAY 1 OF 1: WINDOWS HOSTS                          #
+#                                                                             #
+# This single play targets all Windows hosts and uses conditionals            #
+# (when: inventory_hostname == "...") to route tasks to the correct hosts.    #
+#                                                                             #
+# Element Breakdown:                                                          #
+#   SysAdmin Element 1 - Shared Folder + AD Group (AD01 + MGMT01)            #
+#   SysAdmin Element 2 - DNS Scavenging (AD01 only)                          #
+#   Hardening Element 1 - Disable SMBv1 (all Windows hosts)                  #
+#   Hardening Element 2 - Disable WDigest (all Windows hosts)                #
+#   GPO Element 1 - Audit Logon Events (MGMT01 + WKS01)                     #
+#   GPO Element 2 - Hide Last Username (MGMT01 + WKS01)                     #
+###############################################################################
+
+- name: "Spring Break Lab - Windows Systems Administration, Hardening, and GPO"
+  hosts: windows
+  gather_facts: yes
+
+  tasks:
+
+    ##=========================================================================
+    ## SYSADMIN ELEMENT 1: Create Shared Folder + AD Security Group
+    ##=========================================================================
+    ##
+    ## Goal: Create a "DepartmentDocs" shared folder on MGMT01, backed by
+    ##       a dedicated AD security group ("DeptDocs_Users") created on AD01.
+    ##
+    ## Why this matters:
+    ##   Provisioning file shares with proper NTFS/share permissions and
+    ##   AD group-based access control is one of the most common sysadmin
+    ##   tasks in any Windows domain environment. Instead of assigning
+    ##   permissions to individual users, we assign them to a group — so
+    ##   when a new employee joins, we just add them to the group.
+    ##
+    ## How it works:
+    ##   1. On AD01 (the DC), create a Global Security group in AD.
+    ##   2. On MGMT01, create the folder directory.
+    ##   3. On MGMT01, create an SMB share pointing to that folder,
+    ##      granting FullAccess to the AD group.
+    ##
+    ## Hosts involved: AD01 (group creation), MGMT01 (folder + share)
+    ##=========================================================================
+
+    # ---- Step 1: Create the AD security group on the Domain Controller ----
+    # We use win_shell with PowerShell's New-ADGroup cmdlet.
+    # The conditional check prevents errors if the group already exists.
+    - name: "SysAdmin1 - Create AD security group 'DeptDocs_Users' on AD01"
+      win_shell: |
+        # Check if the group already exists to make this idempotent
+        if (-not (Get-ADGroup -Filter {Name -eq "DeptDocs_Users"} -ErrorAction SilentlyContinue)) {
+            New-ADGroup -Name "DeptDocs_Users" `
+                        -GroupScope Global `
+                        -GroupCategory Security `
+                        -Path "CN=Users,DC=thomas,DC=local" `
+                        -Description "Security group for DepartmentDocs share access"
+            Write-Output "CHANGED: Group DeptDocs_Users created."
+        } else {
+            Write-Output "OK: Group DeptDocs_Users already exists."
+        }
+      register: create_group_result
+      when: inventory_hostname == "AD01"
+      changed_when: "'CHANGED' in create_group_result.stdout"
+
+    # ---- Step 2: Show the result for verification ----
+    - name: "SysAdmin1 - Debug group creation result"
+      debug:
+        msg: "{{ create_group_result.stdout_lines | default(['Skipped - not AD01']) }}"
+      when: inventory_hostname == "AD01"
+
+    # ---- Step 3: Create the DepartmentDocs directory on MGMT01 ----
+    # win_file ensures the directory exists; it won't fail if already present.
+    - name: "SysAdmin1 - Create DepartmentDocs folder on MGMT01"
+      win_file:
+        path: C:\Shares\DepartmentDocs
+        state: directory
+      when: inventory_hostname == "MGMT01"
+
+    # ---- Step 4: Create the SMB share on MGMT01 ----
+    # New-SmbShare creates a network share. We grant FullAccess to our
+    # AD group so any member can read/write to the share.
+    - name: "SysAdmin1 - Create SMB share for DepartmentDocs on MGMT01"
+      win_shell: |
+        # Check if the share already exists to make this idempotent
+        $share = Get-SmbShare -Name "DepartmentDocs" -ErrorAction SilentlyContinue
+        if (-not $share) {
+            New-SmbShare -Name "DepartmentDocs" `
+                         -Path "C:\Shares\DepartmentDocs" `
+                         -FullAccess "thomas\DeptDocs_Users" `
+                         -Description "Department Documents Share"
+            Write-Output "CHANGED: Share created."
+        } else {
+            Write-Output "OK: Share already exists."
+        }
+      register: share_result
+      when: inventory_hostname == "MGMT01"
+      changed_when: "'CHANGED' in share_result.stdout"
+
+    # ---- Step 5: Verify the share was created ----
+    - name: "SysAdmin1 - Verify DepartmentDocs share exists"
+      win_shell: |
+        Get-SmbShare -Name "DepartmentDocs" -ErrorAction SilentlyContinue |
+          Select-Object Name, Path, Description | Format-List
+      register: share_verify
+      when: inventory_hostname == "MGMT01"
+
+    - name: "SysAdmin1 - Debug share verification"
+      debug:
+        msg: "{{ share_verify.stdout_lines | default(['Skipped - not MGMT01']) }}"
+      when: inventory_hostname == "MGMT01"
+
+    ##=========================================================================
+    ## SYSADMIN ELEMENT 2: Configure DNS Scavenging on AD01
+    ##=========================================================================
+    ##
+    ## Goal: Enable DNS aging and scavenging on the thomas.local zone so
+    ##       stale (outdated) DNS records are automatically cleaned up.
+    ##
+    ## Why this matters:
+    ##   Over time, DNS zones accumulate records for machines that have been
+    ##   decommissioned, re-addressed, or renamed. These stale records cause
+    ##   name resolution failures and confusion. DNS scavenging automatically
+    ##   removes records that haven't been refreshed within the aging window.
+    ##
+    ## How it works:
+    ##   1. Enable aging on the thomas.local zone with a 7-day no-refresh
+    ##      and 7-day refresh interval.
+    ##   2. Enable scavenging on the DNS server itself (scavenging interval
+    ##      = 7 days), which tells the server to periodically scan and
+    ##      remove records older than the combined aging intervals (14 days).
+    ##
+    ## Hosts involved: AD01 only (that's where DNS lives)
+    ##=========================================================================
+
+    # ---- Step 1: Enable aging on the thomas.local zone ----
+    # NoRefreshInterval: records won't accept timestamp updates during this
+    #   window (prevents unnecessary replication traffic).
+    # RefreshInterval: after NoRefresh, records must refresh or be eligible
+    #   for scavenging.
+    - name: "SysAdmin2 - Enable DNS aging on thomas.local zone"
+      win_shell: |
+        Set-DnsServerZoneAging -Name "thomas.local" `
+            -Aging $true `
+            -NoRefreshInterval "7.00:00:00" `
+            -RefreshInterval "7.00:00:00"
+        Write-Output "DNS aging enabled: NoRefresh=7 days, Refresh=7 days."
+      when: inventory_hostname == "AD01"
+
+    # ---- Step 2: Enable scavenging on the DNS server ----
+    # This tells the DNS server to actually run the scavenging process
+    # every 7 days and remove eligible stale records.
+    - name: "SysAdmin2 - Enable DNS scavenging on the server"
+      win_shell: |
+        Set-DnsServerScavenging -ScavengingState $true `
+            -ScavengingInterval "7.00:00:00"
+        Write-Output "DNS scavenging enabled: interval=7 days."
+      when: inventory_hostname == "AD01"
+
+    # ---- Step 3: Verify the configuration ----
+    - name: "SysAdmin2 - Verify DNS scavenging settings"
+      win_shell: |
+        Get-DnsServerScavenging | Format-List
+      register: scavenge_check
+      when: inventory_hostname == "AD01"
+
+    - name: "SysAdmin2 - Debug DNS scavenging"
+      debug:
+        msg: "{{ scavenge_check.stdout_lines | default(['Skipped - not AD01']) }}"
+      when: inventory_hostname == "AD01"
+
+    ##=========================================================================
+    ## HARDENING ELEMENT 1: Disable SMBv1 on All Windows Hosts
+    ##=========================================================================
+    ##
+    ## Goal: Disable the legacy SMBv1 protocol on every Windows machine
+    ##       in the domain.
+    ##
+    ## Why this matters:
+    ##   SMBv1 is vulnerable to EternalBlue (MS17-010), the exploit behind
+    ##   WannaCry and NotPetya ransomware. It has no encryption, weak
+    ##   authentication, and is no longer needed — SMBv2/v3 are superior
+    ##   in every way. Disabling SMBv1 is recommended by CIS Benchmarks
+    ##   and DISA STIGs, and is one of the first things a pentester checks.
+    ##
+    ## How it works:
+    ##   1. Disable the SMBv1 server component on all Windows hosts using
+    ##      Set-SmbServerConfiguration.
+    ##   2. On non-Core machines (MGMT01, WKS01), also disable the SMBv1
+    ##      client feature using Disable-WindowsOptionalFeature.
+    ##      (Server Core handles optional features differently, so we skip
+    ##      the client removal on AD01.)
+    ##
+    ## Hosts involved: All Windows hosts (AD01, MGMT01, WKS01)
+    ##=========================================================================
+
+    # ---- Step 1: Disable SMBv1 server-side on all Windows hosts ----
+    # This prevents the machine from serving files over SMBv1.
+    - name: "Harden1 - Disable SMBv1 server on all Windows hosts"
+      win_shell: |
+        $smb1 = Get-SmbServerConfiguration | Select-Object -ExpandProperty EnableSMB1Protocol
+        if ($smb1 -eq $true) {
+            Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force
+            Write-Output "CHANGED: SMBv1 server disabled."
+        } else {
+            Write-Output "OK: SMBv1 server already disabled."
+        }
+      register: smb1_result
+      changed_when: "'CHANGED' in smb1_result.stdout"
+
+    # ---- Step 2: Remove the SMBv1 client feature on GUI machines ----
+    # The client side allows the machine to *connect* to SMBv1 shares.
+    # We skip AD01 (Server Core) since optional feature management differs.
+    - name: "Harden1 - Remove SMBv1 client feature (non-Core only)"
+      win_shell: |
+        $feature = Get-WindowsOptionalFeature -Online -FeatureName SMB1Protocol-Client -ErrorAction SilentlyContinue
+        if ($feature -and $feature.State -eq "Enabled") {
+            Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol-Client -NoRestart
+            Write-Output "CHANGED: SMBv1 client feature disabled."
+        } else {
+            Write-Output "OK: SMBv1 client already disabled or not present."
+        }
+      register: smb1_client_result
+      when: inventory_hostname != "AD01"
+      changed_when: "'CHANGED' in smb1_client_result.stdout"
+      # If this fails on a Core server, that's expected — we move on
+      ignore_errors: yes
+
+    # ---- Step 3: Show results ----
+    - name: "Harden1 - Debug SMBv1 status"
+      debug:
+        msg: "Server: {{ smb1_result.stdout | trim }} | Client: {{ smb1_client_result.stdout | default('Skipped') | trim }}"
+
+    ##=========================================================================
+    ## HARDENING ELEMENT 2: Disable WDigest Authentication
+    ##=========================================================================
+    ##
+    ## Goal: Set the UseLogonCredential registry value to 0, preventing
+    ##       WDigest from storing clear-text passwords in LSASS memory.
+    ##
+    ## Why this matters:
+    ##   Tools like Mimikatz can dump LSASS process memory to extract
+    ##   plaintext credentials if WDigest is enabled. This is one of the
+    ##   most common post-exploitation techniques in penetration testing.
+    ##   Setting UseLogonCredential=0 forces WDigest to NOT cache cleartext
+    ##   passwords, making credential dumping much harder.
+    ##
+    ## How it works:
+    ##   1. Set a single DWORD registry value at:
+    ##      HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest
+    ##      Name: UseLogonCredential
+    ##      Value: 0
+    ##   2. This takes effect after the next logon (no reboot required).
+    ##
+    ## Hosts involved: All Windows hosts (AD01, MGMT01, WKS01)
+    ##=========================================================================
+
+    # ---- Step 1: Set the registry key to disable WDigest caching ----
+    - name: "Harden2 - Disable WDigest credential caching via registry"
+      win_regedit:
+        path: HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest
+        name: UseLogonCredential
+        data: 0
+        type: dword
+        state: present
+
+    # ---- Step 2: Verify the setting was applied ----
+    - name: "Harden2 - Verify WDigest is disabled"
+      win_shell: |
+        $val = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest" -Name "UseLogonCredential" -ErrorAction SilentlyContinue).UseLogonCredential
+        if ($val -eq 0) {
+            Write-Output "OK: WDigest credential caching DISABLED."
+        } else {
+            Write-Output "WARNING: WDigest may still cache credentials."
+        }
+      register: wdigest_check
+
+    # ---- Step 3: Show results ----
+    - name: "Harden2 - Debug WDigest status"
+      debug:
+        msg: "{{ wdigest_check.stdout | trim }}"
+
+    ##=========================================================================
+    ## GPO ELEMENT 1: Audit Logon Events (Success + Failure)
+    ##=========================================================================
+    ##
+    ## Goal: Enable auditing of both successful and failed logon events
+    ##       on domain-joined machines (MGMT01 and WKS01) using auditpol.exe.
+    ##
+    ## Why this matters:
+    ##   Logon event auditing (Event IDs 4624, 4625) is the foundation of
+    ##   security monitoring. Without it, you have no visibility into who
+    ##   logged on, when, from where, or how many failed attempts occurred.
+    ##   Blue teams rely on these events to detect brute-force attacks,
+    ##   pass-the-hash, and lateral movement.
+    ##
+    ## How it works:
+    ##   1. Use auditpol.exe to enable success+failure auditing for the
+    ##      "Logon" subcategory (tracks interactive, network, RDP logons).
+    ##   2. Also enable "Kerberos Authentication Service" auditing to
+    ##      capture Kerberos ticket requests (domain authentication).
+    ##   3. auditpol.exe directly modifies the local security policy
+    ##      without needing Group Policy Management Console (GPMC).
+    ##
+    ## Hosts involved: MGMT01 and WKS01 (domain-joined machines)
+    ## Note: We skip AD01 since DC audit policies are typically managed
+    ##       separately and have different default settings.
+    ##=========================================================================
+
+    # ---- Step 1: Enable logon event auditing (success + failure) ----
+    # This covers Event ID 4624 (success) and 4625 (failure)
+    - name: "GPO1 - Enable audit logon events (success + failure)"
+      win_shell: |
+        auditpol /set /subcategory:"Logon" /success:enable /failure:enable
+        Write-Output "Logon auditing enabled for success and failure."
+      when: inventory_hostname in ["MGMT01", "WKS01"]
+
+    # ---- Step 2: Enable Kerberos authentication auditing ----
+    # This tracks domain authentication (TGT requests)
+    - name: "GPO1 - Enable audit Kerberos authentication events"
+      win_shell: |
+        auditpol /set /subcategory:"Kerberos Authentication Service" /success:enable /failure:enable
+        Write-Output "Kerberos auth auditing enabled."
+      when: inventory_hostname in ["MGMT01", "WKS01"]
+
+    # ---- Step 3: Verify the audit policy settings ----
+    - name: "GPO1 - Verify audit policy settings"
+      win_shell: |
+        Write-Output "=== Logon/Logoff Category ==="
+        auditpol /get /category:"Logon/Logoff"
+        Write-Output ""
+        Write-Output "=== Account Logon Category ==="
+        auditpol /get /category:"Account Logon"
+      register: audit_check
+      when: inventory_hostname in ["MGMT01", "WKS01"]
+
+    # ---- Step 4: Show results ----
+    - name: "GPO1 - Debug audit policy"
+      debug:
+        msg: "{{ audit_check.stdout_lines | default(['Skipped - not a domain member machine']) }}"
+      when: inventory_hostname in ["MGMT01", "WKS01"]
+
+    ##=========================================================================
+    ## GPO ELEMENT 2: Hide Last Logged-On Username at Logon Screen
+    ##=========================================================================
+    ##
+    ## Goal: Configure domain-joined machines to NOT display the last
+    ##       logged-in user's name on the Windows logon screen.
+    ##
+    ## Why this matters:
+    ##   By default, Windows shows the last username at the login screen.
+    ##   This gives an attacker half the credential pair for free — they
+    ##   only need to guess the password. Hiding the username forces an
+    ##   attacker to know both the username AND the password, effectively
+    ##   doubling the difficulty of a targeted credential attack.
+    ##
+    ## How it works:
+    ##   1. Set a DWORD registry value at:
+    ##      HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+    ##      Name: dontdisplaylastusername
+    ##      Value: 1
+    ##   2. This mirrors the GPO setting "Interactive logon: Do not display
+    ##      last user name" without requiring GPMC.
+    ##   3. Takes effect at the next logon screen display.
+    ##
+    ## Hosts involved: MGMT01 and WKS01 (domain-joined machines)
+    ##=========================================================================
+
+    # ---- Step 1: Set the registry key to hide the last username ----
+    - name: "GPO2 - Hide last logged-on username at logon screen"
+      win_regedit:
+        path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+        name: dontdisplaylastusername
+        data: 1
+        type: dword
+        state: present
+      when: inventory_hostname in ["MGMT01", "WKS01"]
+
+    # ---- Step 2: Verify the setting was applied ----
+    - name: "GPO2 - Verify last username display setting"
+      win_shell: |
+        $val = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "dontdisplaylastusername" -ErrorAction SilentlyContinue).dontdisplaylastusername
+        if ($val -eq 1) {
+            Write-Output "OK: Last username is HIDDEN at logon screen."
+        } else {
+            Write-Output "WARNING: Last username may still be displayed."
+        }
+      register: lastuser_check
+      when: inventory_hostname in ["MGMT01", "WKS01"]
+
+    # ---- Step 3: Show results ----
+    - name: "GPO2 - Debug last username policy"
+      debug:
+        msg: "{{ lastuser_check.stdout | default('Skipped - not a domain member machine') | trim }}"
+      when: inventory_hostname in ["MGMT01", "WKS01"]
+
+###############################################################################
+#                                                                             #
+#   PLAYBOOK COMPLETE                                                         #
+#                                                                             #
+#   Quick Verification Checklist:                                             #
+#     1. SysAdmin1: On MGMT01, run Get-SmbShare to confirm DepartmentDocs    #
+#     2. SysAdmin2: On AD01, run Get-DnsServerScavenging to confirm aging    #
+#     3. Harden1: On any host, run Get-SmbServerConfiguration to check SMBv1 #
+#     4. Harden2: Check registry for WDigest UseLogonCredential = 0          #
+#     5. GPO1: Run auditpol /get /category:"Logon/Logoff" on MGMT01/WKS01   #
+#     6. GPO2: Check registry dontdisplaylastusername = 1 on MGMT01/WKS01   #
+#                                                                             #
+###############################################################################
