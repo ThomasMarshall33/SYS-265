@@ -1,0 +1,264 @@
+
+PLAY [Spring Break Lab - Windows Systems Administration, Hardening, and GPO] ***
+
+TASK [Gathering Facts] *********************************************************
+ok: [AD01]
+ok: [WKS01]
+ok: [MGMT01]
+
+TASK [SysAdmin1 - Create AD security group 'DeptDocs_Users' on AD01] ***********
+skipping: [MGMT01]
+skipping: [WKS01]
+ok: [AD01]
+
+TASK [SysAdmin1 - Debug group creation result] *********************************
+skipping: [MGMT01]
+skipping: [WKS01]
+ok: [AD01] => {
+    "msg": [
+        "OK: Group DeptDocs_Users already exists."
+    ]
+}
+
+TASK [SysAdmin1 - Create DepartmentDocs folder on MGMT01] **********************
+skipping: [AD01]
+skipping: [WKS01]
+ok: [MGMT01]
+
+TASK [SysAdmin1 - Create SMB share for DepartmentDocs on MGMT01] ***************
+skipping: [AD01]
+skipping: [WKS01]
+ok: [MGMT01]
+
+TASK [SysAdmin1 - Verify DepartmentDocs share exists] **************************
+skipping: [AD01]
+skipping: [WKS01]
+changed: [MGMT01]
+
+TASK [SysAdmin1 - Debug share verification] ************************************
+skipping: [AD01]
+skipping: [WKS01]
+ok: [MGMT01] => {
+    "msg": [
+        "",
+        "",
+        "Name        : DepartmentDocs",
+        "Path        : C:\\Shares\\DepartmentDocs",
+        "Description : Department Documents Share",
+        "",
+        "",
+        ""
+    ]
+}
+
+TASK [SysAdmin2 - Enable DNS aging on thomas.local zone] ***********************
+skipping: [MGMT01]
+skipping: [WKS01]
+changed: [AD01]
+
+TASK [SysAdmin2 - Enable DNS scavenging on the server] *************************
+skipping: [MGMT01]
+skipping: [WKS01]
+changed: [AD01]
+
+TASK [SysAdmin2 - Verify DNS scavenging settings] ******************************
+skipping: [MGMT01]
+skipping: [WKS01]
+changed: [AD01]
+
+TASK [SysAdmin2 - Debug DNS scavenging] ****************************************
+skipping: [MGMT01]
+skipping: [WKS01]
+ok: [AD01] => {
+    "msg": [
+        "",
+        "",
+        "NoRefreshInterval  : 7.00:00:00",
+        "RefreshInterval    : 7.00:00:00",
+        "ScavengingInterval : 7.00:00:00",
+        "ScavengingState    : True",
+        "LastScavengeTime   : ",
+        "",
+        "",
+        ""
+    ]
+}
+
+TASK [Harden1 - Disable SMBv1 server on all Windows hosts] *********************
+ok: [AD01]
+ok: [WKS01]
+ok: [MGMT01]
+
+TASK [Harden1 - Remove SMBv1 client feature (non-Core only)] *******************
+skipping: [AD01]
+ok: [WKS01]
+ok: [MGMT01]
+
+TASK [Harden1 - Debug SMBv1 status] ********************************************
+ok: [AD01] => {
+    "msg": "Server: OK: SMBv1 server already disabled. | Client: Skipped"
+}
+ok: [MGMT01] => {
+    "msg": "Server: OK: SMBv1 server already disabled. | Client: OK: SMBv1 client already disabled or not present."
+}
+ok: [WKS01] => {
+    "msg": "Server: OK: SMBv1 server already disabled. | Client: OK: SMBv1 client already disabled or not present."
+}
+
+TASK [Harden2 - Disable WDigest credential caching via registry] ***************
+ok: [AD01]
+ok: [WKS01]
+ok: [MGMT01]
+
+TASK [Harden2 - Verify WDigest is disabled] ************************************
+changed: [AD01]
+changed: [MGMT01]
+changed: [WKS01]
+
+TASK [Harden2 - Debug WDigest status] ******************************************
+ok: [AD01] => {
+    "msg": "OK: WDigest credential caching DISABLED."
+}
+ok: [MGMT01] => {
+    "msg": "OK: WDigest credential caching DISABLED."
+}
+ok: [WKS01] => {
+    "msg": "OK: WDigest credential caching DISABLED."
+}
+
+TASK [GPO1 - Enable audit logon events (success + failure)] ********************
+skipping: [AD01]
+changed: [MGMT01]
+changed: [WKS01]
+
+TASK [GPO1 - Enable audit Kerberos authentication events] **********************
+skipping: [AD01]
+changed: [MGMT01]
+changed: [WKS01]
+
+TASK [GPO1 - Verify audit policy settings] *************************************
+skipping: [AD01]
+changed: [MGMT01]
+changed: [WKS01]
+
+TASK [GPO1 - Debug audit policy] ***********************************************
+skipping: [AD01]
+ok: [MGMT01] => {
+    "msg": [
+        "=== Logon/Logoff Category ===",
+        "System audit policy",
+        "",
+        "Category/Subcategory                      Setting",
+        "Logon/Logoff",
+        "  Logon                                   Success and Failure",
+        "",
+        "  Logoff                                  Success",
+        "",
+        "  Account Lockout                         Success",
+        "",
+        "  IPsec Main Mode                         No Auditing",
+        "",
+        "  IPsec Quick Mode                        No Auditing",
+        "",
+        "  IPsec Extended Mode                     No Auditing",
+        "",
+        "  Special Logon                           Success",
+        "",
+        "  Other Logon/Logoff Events               No Auditing",
+        "",
+        "  Network Policy Server                   Success and Failure",
+        "",
+        "  User / Device Claims                    No Auditing",
+        "",
+        "  Group Membership                        No Auditing",
+        "",
+        "  Access Rights                           No Auditing",
+        "",
+        "",
+        "=== Account Logon Category ===",
+        "System audit policy",
+        "",
+        "Category/Subcategory                      Setting",
+        "Account Logon",
+        "  Kerberos Service Ticket Operations      Success",
+        "",
+        "  Other Account Logon Events              No Auditing",
+        "",
+        "  Kerberos Authentication Service         Success and Failure",
+        "",
+        "  Credential Validation                   Success",
+        ""
+    ]
+}
+ok: [WKS01] => {
+    "msg": [
+        "=== Logon/Logoff Category ===",
+        "System audit policy",
+        "",
+        "Category/Subcategory                      Setting",
+        "Logon/Logoff",
+        "  Logon                                   Success and Failure",
+        "",
+        "  Logoff                                  Success",
+        "",
+        "  Account Lockout                         Success",
+        "",
+        "  IPsec Main Mode                         No Auditing",
+        "",
+        "  IPsec Quick Mode                        No Auditing",
+        "",
+        "  IPsec Extended Mode                     No Auditing",
+        "",
+        "  Special Logon                           Success",
+        "",
+        "  Other Logon/Logoff Events               No Auditing",
+        "",
+        "  Network Policy Server                   Success and Failure",
+        "",
+        "  User / Device Claims                    No Auditing",
+        "",
+        "  Group Membership                        No Auditing",
+        "",
+        "  Access Rights                           No Auditing",
+        "",
+        "",
+        "=== Account Logon Category ===",
+        "System audit policy",
+        "",
+        "Category/Subcategory                      Setting",
+        "Account Logon",
+        "  Kerberos Service Ticket Operations      No Auditing",
+        "",
+        "  Other Account Logon Events              No Auditing",
+        "",
+        "  Kerberos Authentication Service         Success and Failure",
+        "",
+        "  Credential Validation                   No Auditing",
+        ""
+    ]
+}
+
+TASK [GPO2 - Hide last logged-on username at logon screen] *********************
+skipping: [AD01]
+ok: [WKS01]
+ok: [MGMT01]
+
+TASK [GPO2 - Verify last username display setting] *****************************
+skipping: [AD01]
+changed: [MGMT01]
+changed: [WKS01]
+
+TASK [GPO2 - Debug last username policy] ***************************************
+skipping: [AD01]
+ok: [MGMT01] => {
+    "msg": "OK: Last username is HIDDEN at logon screen."
+}
+ok: [WKS01] => {
+    "msg": "OK: Last username is HIDDEN at logon screen."
+}
+
+PLAY RECAP *********************************************************************
+AD01                       : ok=12   changed=4    unreachable=0    failed=0    skipped=12   rescued=0    ignored=0   
+MGMT01                     : ok=18   changed=6    unreachable=0    failed=0    skipped=6    rescued=0    ignored=0   
+WKS01                      : ok=14   changed=5    unreachable=0    failed=0    skipped=10   rescued=0    ignored=0   
+
